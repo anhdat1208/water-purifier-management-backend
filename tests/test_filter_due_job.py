@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from unittest.mock import Mock
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -108,14 +109,52 @@ def test_job_deduplicates_notification_for_same_filter_and_day(db_session: Sessi
     from app.jobs.filter_due_push import run_filter_due_push_job
 
     _filter_with_remaining_days(db_session, user, 29)
+    _subscription(db_session, user)
+    send_web_push = Mock(return_value="ok")
 
-    first = run_filter_due_push_job(db_session, today=TODAY, send=False)
-    second = run_filter_due_push_job(db_session, today=TODAY, send=False)
+    import app.jobs.filter_due_push as filter_due_push
+
+    original_send_web_push = filter_due_push.send_web_push
+    filter_due_push.send_web_push = send_web_push
+    try:
+        first = run_filter_due_push_job(db_session, today=TODAY)
+        second = run_filter_due_push_job(db_session, today=TODAY)
+    finally:
+        filter_due_push.send_web_push = original_send_web_push
 
     assert first["created"] == 1
     assert second["created"] == 0
     assert second["skipped_dup"] == 1
+    assert send_web_push.call_count == 1
     assert len(db_session.scalars(select(Notification)).all()) == 1
+
+
+def test_job_uses_app_timezone_calendar_date_when_today_is_omitted(
+    db_session: Session, user: User, monkeypatch
+):
+    import app.jobs.filter_due_push as filter_due_push
+
+    expected_date = date(2026, 7, 25)
+    _filter_with_remaining_days(db_session, user, 29)
+    monkeypatch.setattr("app.config.settings.app_timezone", "Pacific/Kiritimati")
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls, timezone):
+            timezone_name = getattr(timezone, "key", None) or timezone.zone
+            assert timezone_name == "Pacific/Kiritimati"
+            return cls()
+
+        def date(self):
+            return expected_date
+
+    monkeypatch.setattr(filter_due_push, "datetime", FixedDateTime)
+
+    result = filter_due_push.run_filter_due_push_job(db_session, send=False)
+
+    notification = db_session.scalar(select(Notification))
+    assert result["created"] == 1
+    assert notification.sent_date == expected_date
 
 
 def test_job_creates_history_without_subscription(db_session: Session, user: User):

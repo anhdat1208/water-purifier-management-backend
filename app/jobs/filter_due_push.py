@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
+from app.config import settings
+from app.jobs.timezone import get_timezone
 from app.models.entities import Filter, Notification, PushSubscription
 from app.services.business import get_system_settings
 from app.services.filter_remaining import build_filter_due_copy, compute_remaining_days
@@ -16,7 +19,7 @@ def run_filter_due_push_job(
     today: date | None = None,
     send: bool = True,
 ) -> dict[str, int]:
-    as_of = today or date.today()
+    as_of = today or datetime.now(get_timezone(settings.app_timezone)).date()
     system_settings = get_system_settings(db)
     if not system_settings.auto_notify_filter_due:
         return {"scanned": 0, "created": 0, "pushed": 0, "skipped_flag": 1, "skipped_dup": 0}
@@ -63,6 +66,12 @@ def run_filter_due_push_job(
                 sent_date=as_of,
             )
         )
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            skipped_dup += 1
+            continue
         created += 1
 
         if not send:

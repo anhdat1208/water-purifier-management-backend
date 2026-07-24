@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 from apscheduler.schedulers.background import BackgroundScheduler
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:  # Python 3.8 compatibility
-    from pytz import timezone as ZoneInfo
 
 from app.config import settings
 from app.database import SessionLocal
 from app.jobs.filter_due_push import run_filter_due_push_job
+from app.jobs.timezone import get_timezone
 
 _scheduler: BackgroundScheduler | None = None
 
@@ -18,7 +15,7 @@ def start_scheduler() -> None:
     if _scheduler is not None:
         return
 
-    _scheduler = BackgroundScheduler(timezone=ZoneInfo(settings.app_timezone))
+    _scheduler = BackgroundScheduler(timezone=get_timezone(settings.app_timezone))
     _scheduler.add_job(
         _job_wrapper,
         trigger="cron",
