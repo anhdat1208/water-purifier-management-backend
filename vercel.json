@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/v1/internal/run-filter-due-push",
+      "schedule": "0 1 * * *"
+    }
+  ]
+}
