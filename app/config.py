@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     vapid_subject: str = "mailto:admin@waterpurifier.local"
     push_job_hour: int = 8
     app_timezone: str = "Asia/Ho_Chi_Minh"
+    cron_secret: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -8,7 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import SessionLocal, engine
 from app.jobs.scheduler import start_scheduler, stop_scheduler
-from app.routers import admin, ai_assistant, auth, dashboard, filters, notifications, push, purifiers
+from app.routers import admin, ai_assistant, auth, dashboard, filters, internal, notifications, push, purifiers
+from app.routers.internal import is_vercel_runtime
 from app.services.seed import seed_database
 
 
@@ -35,11 +36,15 @@ async def lifespan(_: FastAPI):
             seed_database(db)
         finally:
             db.close()
-    start_scheduler()
+    # Vercel serverless không giữ process 24/7 — dùng Vercel Cron thay APScheduler.
+    use_inprocess_scheduler = not is_vercel_runtime()
+    if use_inprocess_scheduler:
+        start_scheduler()
     try:
         yield
     finally:
-        stop_scheduler()
+        if use_inprocess_scheduler:
+            stop_scheduler()
 
 
 app = FastAPI(
@@ -58,7 +63,17 @@ app.add_middleware(
 )
 
 API_PREFIX = "/api/v1"
-for router in (auth, dashboard, purifiers, filters, notifications, push, ai_assistant, admin):
+for router in (
+    auth,
+    dashboard,
+    purifiers,
+    filters,
+    notifications,
+    push,
+    internal,
+    ai_assistant,
+    admin,
+):
     app.include_router(router.router, prefix=API_PREFIX)
 
 
