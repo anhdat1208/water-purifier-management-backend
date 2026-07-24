@@ -12,7 +12,12 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.entities import ActivityType, Filter, FilterType, Purifier, User
 from app.schemas.filter import FilterCreate, FilterOut, FilterUpdate
-from app.services.business import filter_to_out, log_activity, sync_purifier_filter_life
+from app.services.business import (
+    compute_filter_life_percent,
+    filter_to_out,
+    log_activity,
+    sync_purifier_filter_life,
+)
 
 router = APIRouter(prefix="/filters", tags=["Lõi lọc"])
 
@@ -22,6 +27,14 @@ def list_filters(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
+    filters = db.scalars(
+        select(Filter)
+        .options(joinedload(Filter.purifier))
+        .where(Filter.user_id == current_user.id)
+        .order_by(Filter.id)
+    ).all()
+    for purifier_id in {f.purifier_id for f in filters}:
+        sync_purifier_filter_life(db, purifier_id)
     filters = db.scalars(
         select(Filter)
         .options(joinedload(Filter.purifier))
@@ -48,13 +61,14 @@ def create_filter(
     db: Annotated[Session, Depends(get_db)],
 ):
     _ensure_purifier_owner(db, current_user, payload.purifier_id)
+    life_percent = compute_filter_life_percent(payload.last_replaced_date, payload.lifespan_days)
     filter_item = Filter(
         user_id=current_user.id,
         purifier_id=payload.purifier_id,
         name=payload.name,
         type=FilterType(payload.type),
         stage=payload.stage,
-        life_percent=payload.life_percent,
+        life_percent=life_percent,
         lifespan_days=payload.lifespan_days,
         installed_date=payload.installed_date,
         last_replaced_date=payload.last_replaced_date,
@@ -85,6 +99,10 @@ def update_filter(
         _ensure_purifier_owner(db, current_user, updates["purifier_id"])
     for key, value in updates.items():
         setattr(filter_item, key, value)
+    filter_item.life_percent = compute_filter_life_percent(
+        filter_item.last_replaced_date,
+        filter_item.lifespan_days,
+    )
     db.commit()
     db.refresh(filter_item)
     filter_item = db.scalar(
@@ -116,8 +134,8 @@ def replace_filter(
 ):
     filter_item = _get_user_filter(db, current_user, filter_id)
     today = date.today()
-    filter_item.life_percent = 100
     filter_item.last_replaced_date = today
+    filter_item.life_percent = compute_filter_life_percent(today, filter_item.lifespan_days, today)
     db.commit()
     db.refresh(filter_item)
     filter_item = db.scalar(

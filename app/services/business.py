@@ -63,7 +63,27 @@ def purifier_to_out(purifier: Purifier) -> PurifierOut:
     )
 
 
+def compute_filter_life_percent(
+    last_replaced_date: date,
+    lifespan_days: int,
+    today: date | None = None,
+) -> int:
+    """% tuổi thọ còn lại theo số ngày đã dùng từ lần thay gần nhất."""
+    if lifespan_days <= 0:
+        return 0
+    as_of = today or date.today()
+    days_used = (as_of - last_replaced_date).days
+    if days_used <= 0:
+        return 100
+    remaining_ratio = 1 - (days_used / lifespan_days)
+    return max(0, min(100, round(remaining_ratio * 100)))
+
+
 def filter_to_out(filter_item: Filter) -> FilterOut:
+    life_percent = compute_filter_life_percent(
+        filter_item.last_replaced_date,
+        filter_item.lifespan_days,
+    )
     return FilterOut(
         id=filter_item.id,
         name=filter_item.name,
@@ -71,7 +91,7 @@ def filter_to_out(filter_item: Filter) -> FilterOut:
         purifier_id=filter_item.purifier_id,
         purifier_name=filter_item.purifier.name if filter_item.purifier else "",
         stage=filter_item.stage,
-        life_percent=filter_item.life_percent,
+        life_percent=life_percent,
         lifespan_days=filter_item.lifespan_days,
         installed_date=filter_item.installed_date,
         last_replaced_date=filter_item.last_replaced_date,
@@ -146,10 +166,16 @@ def sync_purifier_filter_life(db: Session, purifier_id: int) -> None:
     purifier = db.get(Purifier, purifier_id)
     if purifier is None:
         return
-    min_life = db.scalar(select(func.min(Filter.life_percent)).where(Filter.purifier_id == purifier_id))
-    if min_life is not None:
-        purifier.filter_life_percent = min_life
-        db.commit()
+    filters = db.scalars(select(Filter).where(Filter.purifier_id == purifier_id)).all()
+    if not filters:
+        return
+    for filter_item in filters:
+        filter_item.life_percent = compute_filter_life_percent(
+            filter_item.last_replaced_date,
+            filter_item.lifespan_days,
+        )
+    purifier.filter_life_percent = min(filter_item.life_percent for filter_item in filters)
+    db.commit()
 
 
 def get_system_settings(db: Session) -> SystemSettings:
@@ -175,6 +201,9 @@ def settings_to_out(row: SystemSettings) -> SystemSettingsOut:
 
 def get_dashboard_overview(db: Session, user: User) -> DashboardOverviewOut:
     sys_settings = get_system_settings(db)
+    for purifier_id in db.scalars(select(Purifier.id).where(Purifier.user_id == user.id)).all():
+        sync_purifier_filter_life(db, purifier_id)
+
     purifiers = list(db.scalars(select(Purifier).where(Purifier.user_id == user.id)).all())
     filters = list(
         db.scalars(
