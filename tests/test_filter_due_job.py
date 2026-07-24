@@ -181,3 +181,21 @@ def test_job_deletes_gone_subscription(db_session: Session, user: User, monkeypa
     assert result["created"] == 1
     assert result["pushed"] == 0
     assert db_session.get(PushSubscription, subscription.id) is None
+
+
+def test_send_web_push_returns_error_when_transport_fails(user: User, monkeypatch):
+    from app.services.push_sender import send_web_push
+
+    subscription = PushSubscription(
+        user_id=user.id,
+        endpoint="https://push.example.test/subscription",
+        p256dh="p256dh",
+        auth="auth",
+    )
+    monkeypatch.setattr("app.services.push_sender.settings.vapid_private_key", "private-key")
+    monkeypatch.setattr("app.services.push_sender.settings.vapid_public_key", "public-key")
+    monkeypatch.setattr("app.services.push_sender.webpush", Mock(side_effect=ConnectionError))
+
+    result = send_web_push(subscription, "Tiêu đề", "Nội dung", {})
+
+    assert result == "error"

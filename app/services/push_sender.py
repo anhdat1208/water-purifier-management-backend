@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Literal
 
 from pywebpush import WebPushException, webpush
 
 from app.config import settings
 from app.models.entities import PushSubscription
+
+
+logger = logging.getLogger(__name__)
 
 
 def send_web_push(
@@ -31,5 +35,8 @@ def send_web_push(
     except WebPushException as exc:
         status = getattr(getattr(exc, "response", None), "status_code", None)
         return "gone" if status in (404, 410) else "error"
+    except Exception:
+        logger.exception("Web push transport failed for subscription %s", subscription.id)
+        return "error"
 
     return "ok"
