@@ -4,7 +4,7 @@ import os
 import secrets
 from typing_extensions import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -41,9 +41,13 @@ def _require_cron_secret(
 def run_filter_due_push(
     db: Annotated[Session, Depends(get_db)],
     _: Annotated[None, Depends(_require_cron_secret)],
+    force: Annotated[bool, Query()] = False,
 ):
-    """Vercel Cron (GET) gọi endpoint này mỗi ngày để quét lõi ≤ 30 ngày."""
-    result = run_filter_due_push_job(db)
+    """Vercel Cron (GET) gọi endpoint này mỗi ngày để quét lõi ≤ 30 ngày.
+
+    `force=true`: gửi lại Web Push dù hôm nay đã có bản ghi lịch sử (dùng để test).
+    """
+    result = run_filter_due_push_job(db, force_resend=force)
     return success(result)
 
 

@@ -28,7 +28,7 @@ def test_run_filter_due_push_rejects_bad_secret(cron_client: TestClient):
 def test_run_filter_due_push_ok(cron_client: TestClient, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         "app.routers.internal.run_filter_due_push_job",
-        lambda db, today=None, send=True: {
+        lambda db, today=None, send=True, force_resend=False: {
             "scanned": 1,
             "created": 0,
             "pushed": 0,

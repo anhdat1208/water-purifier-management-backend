@@ -66,7 +66,9 @@ def test_job_skips_all_filters_when_auto_notify_disabled(db_session: Session, us
 
     result = run_filter_due_push_job(db_session, today=TODAY)
 
-    assert result == {"scanned": 0, "created": 0, "pushed": 0, "skipped_flag": 1, "skipped_dup": 0}
+    assert result["skipped_flag"] == 1
+    assert result["created"] == 0
+    assert result["pushed"] == 0
     assert db_session.scalars(select(Notification)).all() == []
 
 
@@ -86,7 +88,11 @@ def test_job_creates_notification_and_pushes_due_filter(
     result = run_filter_due_push_job(db_session, today=TODAY)
     notification = db_session.scalar(select(Notification).where(Notification.filter_id == filter_item.id))
 
-    assert result == {"scanned": 1, "created": 1, "pushed": 1, "skipped_flag": 0, "skipped_dup": 0}
+    assert result["scanned"] == 1
+    assert result["created"] == 1
+    assert result["pushed"] == 1
+    assert result["due"] == 1
+    assert result["subscriptions"] == 1
     assert notification is not None
     assert notification.remaining_days == 29
     assert notification.sent_date == TODAY
@@ -101,8 +107,36 @@ def test_job_ignores_filter_more_than_thirty_days_away(db_session: Session, user
 
     result = run_filter_due_push_job(db_session, today=TODAY)
 
-    assert result == {"scanned": 1, "created": 0, "pushed": 0, "skipped_flag": 0, "skipped_dup": 0}
+    assert result["scanned"] == 1
+    assert result["created"] == 0
+    assert result["pushed"] == 0
+    assert result["due"] == 0
     assert db_session.scalars(select(Notification)).all() == []
+
+
+def test_job_force_resend_pushes_again_without_duplicate_row(
+    db_session: Session, user: User, monkeypatch
+):
+    from app.jobs.filter_due_push import run_filter_due_push_job
+
+    _filter_with_remaining_days(db_session, user, 29)
+    _subscription(db_session, user)
+    sent = []
+    monkeypatch.setattr(
+        "app.jobs.filter_due_push.send_web_push",
+        lambda subscription, title, body, data: sent.append(1) or "ok",
+    )
+
+    first = run_filter_due_push_job(db_session, today=TODAY)
+    second = run_filter_due_push_job(db_session, today=TODAY, force_resend=True)
+
+    assert first["created"] == 1
+    assert first["pushed"] == 1
+    assert second["created"] == 0
+    assert second["skipped_dup"] == 1
+    assert second["pushed"] == 1
+    assert len(sent) == 2
+    assert len(db_session.scalars(select(Notification)).all()) == 1
 
 
 def test_job_deduplicates_notification_for_same_filter_and_day(db_session: Session, user: User):

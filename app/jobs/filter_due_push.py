@@ -18,16 +18,30 @@ def run_filter_due_push_job(
     db: Session,
     today: date | None = None,
     send: bool = True,
+    force_resend: bool = False,
 ) -> dict[str, int]:
     as_of = today or datetime.now(get_timezone(settings.app_timezone)).date()
     system_settings = get_system_settings(db)
     if not system_settings.auto_notify_filter_due:
-        return {"scanned": 0, "created": 0, "pushed": 0, "skipped_flag": 1, "skipped_dup": 0}
+        return {
+            "scanned": 0,
+            "created": 0,
+            "pushed": 0,
+            "skipped_flag": 1,
+            "skipped_dup": 0,
+            "due": 0,
+            "subscriptions": 0,
+            "push_errors": 0,
+            "vapid_configured": int(bool(settings.vapid_public_key and settings.vapid_private_key)),
+        }
 
     filters = db.scalars(select(Filter).options(joinedload(Filter.purifier))).all()
     created = 0
     pushed = 0
     skipped_dup = 0
+    due = 0
+    subscriptions_seen = 0
+    push_errors = 0
 
     for filter_item in filters:
         remaining_days = compute_remaining_days(
@@ -37,6 +51,13 @@ def run_filter_due_push_job(
         )
         if remaining_days > 30:
             continue
+        due += 1
+
+        title, body = build_filter_due_copy(
+            filter_item.name,
+            filter_item.purifier.name if filter_item.purifier else "",
+            remaining_days,
+        )
 
         notification_exists = db.scalar(
             select(Notification.id).where(
@@ -46,33 +67,31 @@ def run_filter_due_push_job(
         )
         if notification_exists is not None:
             skipped_dup += 1
-            continue
-
-        title, body = build_filter_due_copy(
-            filter_item.name,
-            filter_item.purifier.name if filter_item.purifier else "",
-            remaining_days,
-        )
-        db.add(
-            Notification(
-                user_id=filter_item.user_id,
-                filter_id=filter_item.id,
-                purifier_id=filter_item.purifier_id,
-                type="filter_due",
-                title=title,
-                body=body,
-                remaining_days=remaining_days,
-                is_read=False,
-                sent_date=as_of,
+            if not (force_resend and send):
+                continue
+        else:
+            db.add(
+                Notification(
+                    user_id=filter_item.user_id,
+                    filter_id=filter_item.id,
+                    purifier_id=filter_item.purifier_id,
+                    type="filter_due",
+                    title=title,
+                    body=body,
+                    remaining_days=remaining_days,
+                    is_read=False,
+                    sent_date=as_of,
+                )
             )
-        )
-        try:
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            skipped_dup += 1
-            continue
-        created += 1
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                skipped_dup += 1
+                if not (force_resend and send):
+                    continue
+            else:
+                created += 1
 
         if not send:
             continue
@@ -80,6 +99,7 @@ def run_filter_due_push_job(
         subscriptions = db.scalars(
             select(PushSubscription).where(PushSubscription.user_id == filter_item.user_id)
         ).all()
+        subscriptions_seen += len(subscriptions)
         for subscription in subscriptions:
             result = send_web_push(
                 subscription,
@@ -95,6 +115,8 @@ def run_filter_due_push_job(
                 pushed += 1
             elif result == "gone":
                 db.delete(subscription)
+            else:
+                push_errors += 1
 
     db.commit()
     return {
@@ -103,4 +125,8 @@ def run_filter_due_push_job(
         "pushed": pushed,
         "skipped_flag": 0,
         "skipped_dup": skipped_dup,
+        "due": due,
+        "subscriptions": subscriptions_seen,
+        "push_errors": push_errors,
+        "vapid_configured": int(bool(settings.vapid_public_key and settings.vapid_private_key)),
     }
