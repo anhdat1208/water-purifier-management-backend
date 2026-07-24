@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
     seed_demo_data: bool = True
     algorithm: str = "HS256"
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    vapid_subject: str = "mailto:admin@waterpurifier.local"
+    push_job_hour: int = 8
+    app_timezone: str = "Asia/Ho_Chi_Minh"
 
     @property
     def cors_origin_list(self) -> list[str]:

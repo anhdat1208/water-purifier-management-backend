@@ -5,7 +5,7 @@ import uuid
 from datetime import date, datetime
 from typing import List, Optional
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, String, Text, Uuid, func
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -167,3 +167,47 @@ class SystemSettings(Base):
     filter_critical_threshold: Mapped[int] = mapped_column(Integer, default=20)
     notification_email: Mapped[str] = mapped_column(String(255), default="alerts@waterpurifier.local")
     auto_notify_filter_due: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class PushSubscription(Base):
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    endpoint: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    p256dh: Mapped[str] = mapped_column(Text, nullable=False)
+    auth: Mapped[str] = mapped_column(Text, nullable=False)
+    user_agent: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    owner: Mapped["User"] = relationship()
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    __table_args__ = (UniqueConstraint("filter_id", "sent_date", name="uq_notifications_filter_sent_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    filter_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("filters.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    purifier_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("purifiers.id", ondelete="SET NULL"), nullable=True
+    )
+    type: Mapped[str] = mapped_column(String(50), default="filter_due", nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    remaining_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    sent_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+
+    owner: Mapped["User"] = relationship()
