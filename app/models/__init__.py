@@ -3,6 +3,8 @@ from app.models.entities import (
     Conversation,
     Filter,
     Message,
+    Notification,
+    PushSubscription,
     Purifier,
     SystemSettings,
     User,
@@ -16,4 +18,6 @@ __all__ = [
     "Conversation",
     "Message",
     "SystemSettings",
+    "PushSubscription",
+    "Notification",
 ]
