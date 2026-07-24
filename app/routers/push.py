@@ -4,6 +4,7 @@ from typing_extensions import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -55,7 +56,22 @@ def subscribe(
         subscription.auth = payload.keys.auth
         subscription.user_agent = payload.user_agent
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        subscription = db.scalar(select(PushSubscription).where(PushSubscription.endpoint == payload.endpoint))
+        if subscription is None:
+            raise
+        if subscription.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Push subscription đã thuộc về người dùng khác.",
+            )
+        subscription.p256dh = payload.keys.p256dh
+        subscription.auth = payload.keys.auth
+        subscription.user_agent = payload.user_agent
+        db.commit()
     return success({"endpoint": subscription.endpoint})
 
 
