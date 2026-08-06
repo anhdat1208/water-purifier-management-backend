@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
-from app.core.redis_client import is_refresh_token_valid, revoke_refresh_token, store_refresh_token
+from app.core.redis_client import is_refresh_token_valid, store_refresh_token
 from app.core.security import create_access_token, create_refresh_token, hash_password, verify_password
 from app.models.entities import (
     Activity,
@@ -150,16 +150,16 @@ def refresh_tokens(db: Session, refresh_token: str) -> AuthTokensOut:
     except JWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token không hợp lệ.")
 
-    revoke_refresh_token(jti)
     user = db.get(User, UUID(user_id))
     if user is None or user.status != UserStatus.ACTIVE:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Người dùng không hợp lệ.")
 
+    # Không rotate refresh token: tránh mất phiên trên mobile khi response
+    # refresh không về được máy nhưng jti cũ đã bị revoke trên Redis.
     access_token = create_access_token(str(user.id))
-    new_refresh_token, new_jti = create_refresh_token(str(user.id))
     ttl = settings.refresh_token_expire_days * 24 * 60 * 60
-    store_refresh_token(new_jti, str(user.id), ttl)
-    return AuthTokensOut(access_token=access_token, refresh_token=new_refresh_token)
+    store_refresh_token(jti, str(user.id), ttl)
+    return AuthTokensOut(access_token=access_token, refresh_token=refresh_token)
 
 
 def sync_purifier_filter_life(db: Session, purifier_id: int) -> None:
