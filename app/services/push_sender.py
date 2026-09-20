@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import Literal, Optional
+from urllib.parse import urljoin
 
 import firebase_admin
 from firebase_admin import credentials, messaging
@@ -41,6 +42,15 @@ def _get_firebase_app() -> Optional[firebase_admin.App]:
     return _firebase_app
 
 
+def _absolute_web_link(path: str) -> Optional[str]:
+    """FCM webpush.fcm_options.link must be an absolute https URL when set."""
+    origins = settings.cors_origin_list
+    if not origins:
+        return None
+    base = origins[0].rstrip("/") + "/"
+    return urljoin(base, path.lstrip("/"))
+
+
 def send_fcm_push(
     subscription: PushSubscription,
     title: str,
@@ -54,14 +64,17 @@ def send_fcm_push(
     string_data["title"] = title
     string_data["body"] = body
 
+    webpush_config = None
+    absolute_link = _absolute_web_link(string_data.get("url") or "/notifications")
+    if absolute_link and absolute_link.startswith("https://"):
+        webpush_config = messaging.WebpushConfig(
+            fcm_options=messaging.WebpushFCMOptions(link=absolute_link),
+        )
+
     message = messaging.Message(
         token=subscription.fcm_token,
         data=string_data,
-        webpush=messaging.WebpushConfig(
-            fcm_options=messaging.WebpushFCMOptions(
-                link=string_data.get("url") or "/notifications",
-            ),
-        ),
+        webpush=webpush_config,
     )
 
     try:
@@ -73,7 +86,12 @@ def send_fcm_push(
         message_text = str(exc).upper()
         if code in {"NOT_FOUND", "UNREGISTERED"} or "UNREGISTERED" in message_text or "NOT_FOUND" in message_text:
             return "gone"
-        logger.exception("FCM send failed for subscription %s", subscription.id)
+        logger.exception(
+            "FCM send failed for subscription %s code=%s detail=%s",
+            subscription.id,
+            code,
+            exc,
+        )
         return "error"
     except Exception:
         logger.exception("FCM transport failed for subscription %s", subscription.id)
