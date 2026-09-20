@@ -11,7 +11,7 @@ from app.jobs.timezone import get_timezone
 from app.models.entities import Filter, Notification, PushSubscription
 from app.services.business import get_system_settings
 from app.services.filter_remaining import build_filter_due_copy, compute_remaining_days
-from app.services.push_sender import send_web_push
+from app.services.push_sender import send_fcm_push
 
 
 def run_filter_due_push_job(
@@ -32,7 +32,7 @@ def run_filter_due_push_job(
             "due": 0,
             "subscriptions": 0,
             "push_errors": 0,
-            "vapid_configured": int(bool(settings.vapid_public_key and settings.vapid_private_key)),
+            "fcm_configured": int(settings.fcm_configured),
         }
 
     filters = db.scalars(select(Filter).options(joinedload(Filter.purifier))).all()
@@ -101,7 +101,7 @@ def run_filter_due_push_job(
         ).all()
         subscriptions_seen += len(subscriptions)
         for subscription in subscriptions:
-            result = send_web_push(
+            result = send_fcm_push(
                 subscription,
                 title,
                 body,
@@ -128,5 +128,5 @@ def run_filter_due_push_job(
         "due": due,
         "subscriptions": subscriptions_seen,
         "push_errors": push_errors,
-        "vapid_configured": int(bool(settings.vapid_public_key and settings.vapid_private_key)),
+        "fcm_configured": int(settings.fcm_configured),
     }
