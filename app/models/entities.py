@@ -176,9 +176,7 @@ class PushSubscription(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    endpoint: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
-    p256dh: Mapped[str] = mapped_column(Text, nullable=False)
-    auth: Mapped[str] = mapped_column(Text, nullable=False)
+    fcm_token: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     user_agent: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

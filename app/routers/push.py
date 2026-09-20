@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.core.response import success
 from app.database import get_db
 from app.dependencies import get_current_user
@@ -17,25 +16,14 @@ from app.schemas.push import PushSubscribeIn, PushUnsubscribeIn
 router = APIRouter(prefix="/push", tags=["Push"])
 
 
-@router.get("/vapid-public-key")
-def get_vapid_public_key(
-    current_user: Annotated[User, Depends(get_current_user)],
-):
-    if not settings.vapid_public_key:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="VAPID public key chưa cấu hình.",
-        )
-    return success({"public_key": settings.vapid_public_key})
-
-
 @router.post("/subscribe")
 def subscribe(
     payload: PushSubscribeIn,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    subscription = db.scalar(select(PushSubscription).where(PushSubscription.endpoint == payload.endpoint))
+    token = payload.token.strip()
+    subscription = db.scalar(select(PushSubscription).where(PushSubscription.fcm_token == token))
     if subscription is not None and subscription.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -45,22 +33,18 @@ def subscribe(
     if subscription is None:
         subscription = PushSubscription(
             user_id=current_user.id,
-            endpoint=payload.endpoint,
-            p256dh=payload.keys.p256dh,
-            auth=payload.keys.auth,
+            fcm_token=token,
             user_agent=payload.user_agent,
         )
         db.add(subscription)
     else:
-        subscription.p256dh = payload.keys.p256dh
-        subscription.auth = payload.keys.auth
         subscription.user_agent = payload.user_agent
 
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        subscription = db.scalar(select(PushSubscription).where(PushSubscription.endpoint == payload.endpoint))
+        subscription = db.scalar(select(PushSubscription).where(PushSubscription.fcm_token == token))
         if subscription is None:
             raise
         if subscription.user_id != current_user.id:
@@ -68,11 +52,9 @@ def subscribe(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Push subscription đã thuộc về người dùng khác.",
             )
-        subscription.p256dh = payload.keys.p256dh
-        subscription.auth = payload.keys.auth
         subscription.user_agent = payload.user_agent
         db.commit()
-    return success({"endpoint": subscription.endpoint})
+    return success({"token": subscription.fcm_token})
 
 
 @router.delete("/unsubscribe", status_code=status.HTTP_204_NO_CONTENT)
@@ -83,7 +65,7 @@ def unsubscribe(
 ):
     subscription = db.scalar(
         select(PushSubscription).where(
-            PushSubscription.endpoint == payload.endpoint,
+            PushSubscription.fcm_token == payload.token.strip(),
             PushSubscription.user_id == current_user.id,
         )
     )

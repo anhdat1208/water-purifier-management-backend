@@ -48,9 +48,7 @@ def _filter_with_remaining_days(db: Session, user: User, remaining_days: int) ->
 def _subscription(db: Session, user: User) -> PushSubscription:
     subscription = PushSubscription(
         user_id=user.id,
-        endpoint="https://push.example.test/subscription",
-        p256dh="p256dh",
-        auth="auth",
+        fcm_token="fcm-token-example",
     )
     db.add(subscription)
     db.commit()
@@ -81,7 +79,7 @@ def test_job_creates_notification_and_pushes_due_filter(
     _subscription(db_session, user)
     sent = []
     monkeypatch.setattr(
-        "app.jobs.filter_due_push.send_web_push",
+        "app.jobs.filter_due_push.send_fcm_push",
         lambda subscription, title, body, data: sent.append((subscription, title, body, data)) or "ok",
     )
 
@@ -123,7 +121,7 @@ def test_job_force_resend_pushes_again_without_duplicate_row(
     _subscription(db_session, user)
     sent = []
     monkeypatch.setattr(
-        "app.jobs.filter_due_push.send_web_push",
+        "app.jobs.filter_due_push.send_fcm_push",
         lambda subscription, title, body, data: sent.append(1) or "ok",
     )
 
@@ -144,22 +142,22 @@ def test_job_deduplicates_notification_for_same_filter_and_day(db_session: Sessi
 
     _filter_with_remaining_days(db_session, user, 29)
     _subscription(db_session, user)
-    send_web_push = Mock(return_value="ok")
+    send_fcm_push = Mock(return_value="ok")
 
     import app.jobs.filter_due_push as filter_due_push
 
-    original_send_web_push = filter_due_push.send_web_push
-    filter_due_push.send_web_push = send_web_push
+    original_send = filter_due_push.send_fcm_push
+    filter_due_push.send_fcm_push = send_fcm_push
     try:
         first = run_filter_due_push_job(db_session, today=TODAY)
         second = run_filter_due_push_job(db_session, today=TODAY)
     finally:
-        filter_due_push.send_web_push = original_send_web_push
+        filter_due_push.send_fcm_push = original_send
 
     assert first["created"] == 1
     assert second["created"] == 0
     assert second["skipped_dup"] == 1
-    assert send_web_push.call_count == 1
+    assert send_fcm_push.call_count == 1
     assert len(db_session.scalars(select(Notification)).all()) == 1
 
 
@@ -208,7 +206,7 @@ def test_job_deletes_gone_subscription(db_session: Session, user: User, monkeypa
 
     _filter_with_remaining_days(db_session, user, 29)
     subscription = _subscription(db_session, user)
-    monkeypatch.setattr("app.jobs.filter_due_push.send_web_push", lambda *_: "gone")
+    monkeypatch.setattr("app.jobs.filter_due_push.send_fcm_push", lambda *_: "gone")
 
     result = run_filter_due_push_job(db_session, today=TODAY)
 
@@ -217,19 +215,23 @@ def test_job_deletes_gone_subscription(db_session: Session, user: User, monkeypa
     assert db_session.get(PushSubscription, subscription.id) is None
 
 
-def test_send_web_push_returns_error_when_transport_fails(user: User, monkeypatch):
-    from app.services.push_sender import send_web_push
+def test_send_fcm_push_returns_error_when_transport_fails(user: User, monkeypatch):
+    from app.services import push_sender
 
     subscription = PushSubscription(
         user_id=user.id,
-        endpoint="https://push.example.test/subscription",
-        p256dh="p256dh",
-        auth="auth",
+        fcm_token="fcm-token-example",
     )
-    monkeypatch.setattr("app.services.push_sender.settings.vapid_private_key", "private-key")
-    monkeypatch.setattr("app.services.push_sender.settings.vapid_public_key", "public-key")
-    monkeypatch.setattr("app.services.push_sender.webpush", Mock(side_effect=ConnectionError))
+    monkeypatch.setattr(push_sender.settings, "firebase_project_id", "demo-project")
+    monkeypatch.setattr(push_sender.settings, "firebase_client_email", "demo@example.com")
+    monkeypatch.setattr(
+        push_sender.settings,
+        "firebase_private_key",
+        "-----BEGIN PRIVATE KEY-----\\nABC\\n-----END PRIVATE KEY-----\\n",
+    )
+    monkeypatch.setattr(push_sender, "_firebase_app", object())
+    monkeypatch.setattr(push_sender.messaging, "send", Mock(side_effect=ConnectionError))
 
-    result = send_web_push(subscription, "Tiêu đề", "Nội dung", {})
+    result = push_sender.send_fcm_push(subscription, "Tiêu đề", "Nội dung", {})
 
     assert result == "error"
